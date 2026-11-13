@@ -1,0 +1,23 @@
+# Packages the notebook imports or installs. Versions were not recorded when it was run;
+# pin them (pip freeze) after a successful run to make it fully reproducible.
+accelerate
+bitsandbytes
+chromadb
+langchain
+langchain-community
+langchain-openai
+llama-parse
+matplotlib
+nest-asyncio
+numpy
+openai
+pandas
+pypdf
+pyyaml
+requests
+scikit-learn
+tiktoken
+torch
+torchaudio
+torchvision
+transformers
