@@ -1,92 +1,91 @@
-# 📄 OpenAI RAG Document QA (Notebook-Only) — LlamaParse + ChromaDB + Evaluation
+# RAG Policy QA, and What Its Evaluation Got Wrong
 
-A **notebook-based Retrieval-Augmented Generation (RAG)** document question-answering pipeline that loads a PDF, retrieves the most relevant passages, and generates grounded answers using **OpenAI Chat models**. The notebook also includes **model comparison** (multiple LLM backends) and a lightweight **evaluation suite** (hit rate, MRR, faithfulness, relevancy, correctness + response time).
+**A RAG pipeline that answers questions about an insurance policy (LIC New Jeevan Shanti), compared across three LLMs, with an evaluation whose numbers turned out to be more instructive than the models.**
 
-> ✅ **Note:** This project is intentionally **not deployed** (Notebook-only). It is designed for experimentation, benchmarking, and demonstrating RAG evaluation workflows.
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dojedaro/openai-rag-policy-qa-evaluation/blob/main/RAG_Systems_project.ipynb)
+[![Notebook checks](https://github.com/dojedaro/openai-rag-policy-qa-evaluation/actions/workflows/notebooks.yml/badge.svg)](https://github.com/dojedaro/openai-rag-policy-qa-evaluation/actions/workflows/notebooks.yml)
 
----
+> Part of a series of RAG projects: [strict PDF QA](https://github.com/dojedaro/strict-pdf-question-answering) ·
+> [PDF RAG + ReAct agent](https://github.com/dojedaro/pdf-rag-react-agent-langchain) ·
+> **policy QA with evaluation** ·
+> [10-K retrieval evaluation](https://github.com/dojedaro/coca-cola-10k-retrieval-evaluation) ·
+> [research-paper RAG](https://github.com/dojedaro/research-paper-rag-qa-system)
 
-## 🎯 What This Project Demonstrates
+## Results
 
-- End-to-end **RAG pipeline** for PDF document QA
-- **Better PDF parsing** using **LlamaParse** (with fallback to PyPDFLoader)
-- **Vector search** with **ChromaDB** (local, notebook-friendly)
-- Multiple embedding strategies:
-  - **OpenAIEmbeddings**
-  - **BGE (BAAI/bge-large-en-v1.5)** via Hugging Face
-- LLM comparisons across:
-  - **OpenAI Chat models** (e.g., gpt-3.5 variants; optional GPT-4)
-  - Optional open-source HF models (with fallback options depending on runtime)
-- Evaluation + benchmarking utilities:
-  - Response-time comparison
-  - Retrieval/answer quality proxies: **Hit Rate, MRR, Faithfulness, Relevancy, Correctness**
-  - Summary tables + radar chart visualization
+Eight questions about the policy (annuity options, surrender, death benefit, loans, deferment, free-look
+period, tax), each answered by three models over the same retriever.
 
----
+| Model | Mean response time | Hit rate | MRR | Faithfulness | Relevancy | Correctness |
+|---|---|---|---|---|---|---|
+| gpt-3.5-turbo | **3.1 s** | 0.78 | **0.69** | 0.00 | 0.09 | 0.32 |
+| gpt-3.5-turbo-16k | 3.6 s | 0.78 | 0.56 | 0.00 | 0.10 | 0.34 |
+| Flan-T5-base (local) | 11.9 s | 0.89 | 0.38 | 0.00 | 0.12 | **0.92** |
 
-## 🧠 Architecture Overview (RAG Flow)
+### Why these metrics can't be trusted, and what that taught me
 
-1. **Load PDF**
-   - Primary: **LlamaParse** (Markdown output for stronger extraction)
-   - Fallback: **PyPDFLoader**
+Taken at face value, the table says a 250M-parameter Flan-T5 answers far more correctly than
+GPT-3.5. Its answers in the notebook say otherwise. The metrics, not the models, explain the gap:
 
-2. **Chunking**
-   - RecursiveCharacterTextSplitter (`chunk_size=1000`, `chunk_overlap=200`)
+- **"Correctness" is word overlap (Jaccard) with a reference answer, and only 3 of the 8 questions
+  have one.** A model that copies a sentence from the policy scores high; GPT-3.5's answers, which
+  start with "Step 1: The key elements in the question are…", share few words with the reference
+  and score low even when right.
+- **Faithfulness is 0.00 for every model**, which means the metric is broken, not that every answer
+  is unfaithful.
+- **Hit rate and MRR come from evidence phrases appearing in the answer text**, so they measure
+  wording as much as retrieval.
 
-3. **Embedding**
-   - Baseline: OpenAI embeddings
-   - Alternative: BGE-large embeddings (normalized)
+The lesson I took to later projects: validate the metric on a few hand-checked examples before
+trusting a leaderboard, prefer exact-match or LLM-judge scoring with a rubric over word overlap, and
+measure retrieval separately from generation. [factcheck-agents](https://github.com/dojedaro/factcheck-agents)
+does all three.
 
-4. **Vector Store**
-   - **ChromaDB** (notebook/local-friendly; supports quick experimentation)
+## How it works
 
-5. **Retrieval**
-   - Top-k semantic retrieval (`k=5`)
+```mermaid
+flowchart LR
+    P[Policy PDF] --> L[LlamaParse to Markdown<br/>fallback: PyPDFLoader]
+    L --> S[Chunks: 1,000 chars,<br/>200 overlap]
+    S --> E[Embeddings: OpenAI<br/>or BGE-large]
+    E --> V[(ChromaDB)]
+    Q([question]) --> R[Top-5 retrieval]
+    V --> R
+    R --> G1[gpt-3.5-turbo]
+    R --> G2[gpt-3.5-turbo-16k]
+    R --> G3[Flan-T5-base]
+    G1 & G2 & G3 --> M[Timing + metrics]
+```
 
-6. **Answer Generation**
-   - RetrievalQA chain with an enhanced prompt template (grounded, context-first)
+- **Parsing:** LlamaParse converts the PDF to Markdown, which keeps the policy's tables readable;
+  PyPDFLoader is the fallback.
+- **Retrieval:** recursive chunking, OpenAI or `BAAI/bge-large-en-v1.5` embeddings, ChromaDB, top 5.
+- **Generation:** a LangChain RetrievalQA chain with a context-first prompt. Llama-2-7B was planned
+  as a third model, but its Hugging Face repo is gated, so the notebook falls back to Flan-T5.
 
-7. **Evaluation**
-   - Multi-question benchmarking across models and metrics
+## Run it
 
----
+```bash
+pip install -r requirements.txt
+export OPENAI_API_KEY=...        # required
+export LLAMA_API_KEY=...         # optional, for LlamaParse
+jupyter notebook RAG_Systems_project.ipynb
+```
 
-## 📌 Example Use Case in This Notebook
+Upload the policy PDF when the notebook asks. The `gpt-3.5-turbo` models are older; any current
+OpenAI chat model works in their place.
 
-The notebook demonstrates document QA on an insurance policy PDF (LIC “New Jeevan Shanti”) and tests questions like:
+## Stack
 
-- What is this policy and what does it offer?
-- What are the annuity options?
-- How is the death benefit calculated?
-- What is the free look period?
-- What are the tax implications?
+Python, LangChain, OpenAI, LlamaParse, ChromaDB, Hugging Face (BGE embeddings, Flan-T5), scikit-learn.
 
----
+## Next steps
 
-## 🧰 Tech Stack
+- Write reference answers for all 8 questions and score with exact facts (dates, periods,
+  percentages) rather than word overlap.
+- Fix faithfulness by checking each answer sentence against the retrieved chunks with an LLM judge.
+- Score retrieval on its own (is the right clause in the top 5?) before scoring answers.
 
-- **LangChain** – RAG orchestration (chunking, retrieval, chains)
-- **OpenAI** – LLM generation + embeddings
-- **ChromaDB** – vector database for retrieval (local / notebook)
-- **LlamaParse** – improved PDF parsing (optional, recommended)
-- **Hugging Face** – BGE embeddings + optional local LLM experiments
-- **Python / Colab** – notebook execution environment
+## License
 
----
-
-## 🔐 API Keys & Security
-
-This repo is structured to avoid exposing secrets.
-
-### Required environment variables
-- `OPENAI_API_KEY` (required)
-- `LLAMA_API_KEY` (optional, only needed if using LlamaParse)
-
-✅ Recommended approach (Notebook / Colab):
-- Use environment variables or Colab secrets
-- Do **not** commit keys or credential files
-
-Example (local `.env`, not committed):
-```env
-OPENAI_API_KEY=your_openai_key_here
-LLAMA_API_KEY=your_llamaparse_key_here
+MIT
